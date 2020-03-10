@@ -1,12 +1,14 @@
+import {bird} from "./bird.js";
 import {ffnet} from "./ffnet.js";
+import {pipe} from "./pipe.js";
 import {population} from "./population.js"
 
 const _GRAVITY = 900;
 const _TERMINAL_VELOCITY = 400;
 const _MAX_UPWARDS_VELOCITY = -300;
 const _UPWARDS_ACCELERATION = -450;
+const _PIPE_SPACING_X = 250;
 const _PIPE_SPACING_Y = 100;
-const _PIPE_SPACING_X = 200;
 const _TREADMILL_SPEED = -125;
 
 const _CONFIG_WIDTH = 960;
@@ -14,192 +16,6 @@ const _CONFIG_HEIGHT = 540;
 const _GROUND_Y = _CONFIG_HEIGHT;
 const _BIRD_POS_X = 50;
 
-
-class PipePairObject {
-  constructor(scene, x) {
-    const height = _CONFIG_HEIGHT * (0.25 + 0.5 * Math.random());
-    this._sprite1 = scene.add.sprite(x, height + _PIPE_SPACING_Y * 0.5, 'pipe');
-    this._sprite1.displayOriginX = 0;
-    this._sprite1.displayOriginY = 0;
-
-    this._sprite2 = scene.add.sprite(x, height - _PIPE_SPACING_Y * 0.5, 'pipe');
-    this._sprite2.displayOriginX = 0;
-    this._sprite2.displayOriginY = 0;
-    this._sprite2.displayHeight = -1 * this._sprite2.height;
-  }
-
-  Destroy() {
-    this._sprite1.destroy();
-    this._sprite2.destroy();
-  }
-
-  Update(timeElapsed) {
-    this._sprite1.x += timeElapsed * _TREADMILL_SPEED;
-    this._sprite2.x += timeElapsed * _TREADMILL_SPEED;
-  }
-
-  Intersects(aabb) {
-    const b1 = this._sprite1.getBounds();
-    const b2 = this._sprite2.getBounds();
-    b2.y -= this._sprite2.height;
-    return (
-        Phaser.Geom.Intersects.RectangleToRectangle(b1, aabb) ||
-        Phaser.Geom.Intersects.RectangleToRectangle(b2, aabb));
-  }
-
-  Reset(x) {
-    const height = _CONFIG_HEIGHT * (0.25 + 0.5 * Math.random());
-    this._sprite1.x = x;
-    this._sprite1.y = height + _PIPE_SPACING_Y * 0.5;
-    this._sprite2.x = x;
-    this._sprite2.y = height - _PIPE_SPACING_Y * 0.5;
-  }
-
-  get X() {
-    return this._sprite1.x;
-  }
-
-  get Width() {
-    return this._sprite1.width;
-  }
-}
-
-class FlappyBirdObject {
-  constructor(scene) {
-    this._scene = scene;
-    this._sprite = scene.add.sprite(_BIRD_POS_X, 100, 'bird');
-    this._spriteTint = scene.add.sprite(_BIRD_POS_X, 100, 'bird-colour');
-    this._velocity = 0;
-    this._dead = false;
-  }
-
-  Destroy() {
-    this._sprite.destroy();
-  }
-
-  Update(params) {
-    if (this._dead) {
-      return;
-    }
-
-    this._ApplyGravity(params.timeElapsed)
-    this._velocity = Math.min(Math.max(
-        this._velocity, _MAX_UPWARDS_VELOCITY), _TERMINAL_VELOCITY);
-    this._sprite.y += this._velocity * params.timeElapsed;
-    this._spriteTint.y += this._velocity * params.timeElapsed;
-
-    const v = new Phaser.Math.Vector2(
-        -1 * _TREADMILL_SPEED * params.timeElapsed, 0);
-    v.add(new Phaser.Math.Vector2(0, this._velocity));
-    v.normalize();
-
-    const rad = Math.atan2(v.y, v.x);
-    const deg = (180.0 / Math.PI) * rad;
-
-    this._sprite.angle = deg * 0.75;
-    this._spriteTint.angle = deg * 0.75;
-  }
-
-  get Dead() {
-    return this._dead;
-  }
-
-  set Dead(d) {
-    this._dead = d;
-
-    this._scene.tweens.add({
-        targets: this._sprite,
-        props: {
-            alpha: { value: 0.0, duration: 500, ease: 'Sine.easeInOut' },
-        },
-    });
-    this._scene.tweens.add({
-        targets: this._spriteTint,
-        props: {
-            alpha: { value: 0.0, duration: 500, ease: 'Sine.easeInOut' },
-        },
-    });
-  }
-
-  set Alpha(a) {
-    this._sprite.alpha = a;
-    this._spriteTint.alpha = a;
-  }
-
-  get Bounds() {
-    return this._sprite.getBounds();
-  }
-
-  _ApplyGravity(timeElapsed) {
-    this._velocity += _GRAVITY * timeElapsed;
-  }
-}
-
-class FlappyBird_Manual extends FlappyBirdObject {
-  constructor(scene) {
-    super(scene);
-
-    this._frameInputs = [];
-  }
-
-  Update(params) {
-    this._HandleInput(params);
-
-    super.Update(params);
-  }
-
-  _HandleInput(params) {
-    if (!params.keys.up) {
-      return;
-    }
-
-    this._velocity += _UPWARDS_ACCELERATION;
-  }
-}
-
-class FlappyBird_NeuralNet extends FlappyBirdObject {
-  constructor(scene, populationEntity, params) {
-    super(scene);
-
-    this._model = new ffnet.FFNeuralNetwork(params.shapes);
-    this._model.fromArray(populationEntity.genotype);
-    this._populationEntity = populationEntity;
-    this._spriteTint.setTint(params.tint);
-  }
-
-  Update(params) {
-    function _PipeParams(bird, pipe) {
-      const distToPipe = (
-          (pipe.X + pipe.Width) - bird.Bounds.left) / _CONFIG_WIDTH;
-      const distToPipeB = (
-          (pipe._sprite1.y - bird.Bounds.bottom) / _CONFIG_HEIGHT) * 0.5 + 0.5;
-      const distToPipeT = (
-          (pipe._sprite2.y - bird.Bounds.top) / _CONFIG_HEIGHT) * 0.5 + 0.5;
-      return [distToPipe, distToPipeB, distToPipeT];
-    }
-
-    function _Params(bird, pipes) {
-      const inputs = pipes.map(p => _PipeParams(bird, p)).flat();
-
-      inputs.push((bird._velocity / _GRAVITY) * 0.5 + 0.5);
-
-      return inputs;
-    }
-
-    const inputs = _Params(this, params.nearestPipes);
-    const decision = this._model.predict(inputs);
-
-    if (decision > 0.5) {
-      this._velocity += _UPWARDS_ACCELERATION;
-    }
-
-    super.Update(params);
-
-    if (!this.Dead) {
-      this._populationEntity.fitness += params.timeElapsed;
-    }
-  }
-}
 
 class FlappyBirdGame {
   constructor() {
@@ -225,21 +41,21 @@ class FlappyBirdGame {
 
     const NN_DEF2 = [
         {size: 7},
-        {size: 12, activation: ffnet.relu},
+        {size: 9, activation: ffnet.relu},
         {size: 1, activation: ffnet.sigmoid}
     ];
 
     const NN_DEF3 = [
         {size: 7},
-        {size: 8, activation: ffnet.relu},
-        {size: 8, activation: ffnet.relu},
+        {size: 9, activation: ffnet.relu},
+        {size: 9, activation: ffnet.relu},
         {size: 1, activation: ffnet.sigmoid}
     ];
 
     this._populations = [
-      this._CreatePopulation(64, NN_DEF1, 0xFF0000),
-      this._CreatePopulation(64, NN_DEF2, 0x0000FF),
-      this._CreatePopulation(64, NN_DEF3, 0x00FF00),
+      this._CreatePopulation(100, NN_DEF1, 0xFF0000),
+      this._CreatePopulation(100, NN_DEF2, 0x0000FF),
+      this._CreatePopulation(100, NN_DEF3, 0x00FF00),
     ];
   }
 
@@ -252,7 +68,7 @@ class FlappyBirdGame {
         size: t.toArray().length,
       },
       mutation: {
-        magnitude: 0.5,
+        magnitude: 0.1,
         odds: 0.1,
         decay: 0,
       },
@@ -288,7 +104,13 @@ class FlappyBirdGame {
   _Init() {
     for (let i = 0; i < 5; i+=1) {
       this._pipes.push(
-          new PipePairObject(this._scene, 500 + i * _PIPE_SPACING_X));
+          new pipe.PipePairObject({
+            scene: this._scene,
+            x: 500 + i * _PIPE_SPACING_X,
+            spacing: _PIPE_SPACING_Y,
+            speed: _TREADMILL_SPEED,
+            config_height: _CONFIG_HEIGHT
+          }));
     }
 
     this._gameOver = false;
@@ -321,8 +143,20 @@ class FlappyBirdGame {
       curPop.Step();
 
       this._birds.push(...curPop._population.map(
-          p => new FlappyBird_NeuralNet(
-              this._scene, p, curPop._params)));
+          p => new bird.FlappyBird_NeuralNet(
+              {
+                scene: this._scene,
+                pop_entity: p,
+                pop_params: curPop._params,
+                x: _BIRD_POS_X,
+                config_width: _CONFIG_WIDTH,
+                config_height: _CONFIG_HEIGHT,
+                max_upwards_velocity: _MAX_UPWARDS_VELOCITY,
+                terminal_velocity: _TERMINAL_VELOCITY,
+                treadmill_speed: _TREADMILL_SPEED,
+                acceleration: _UPWARDS_ACCELERATION,
+                gravity: _GRAVITY
+              })));
     }
   }
 
@@ -338,8 +172,9 @@ class FlappyBirdGame {
         scale: {
           mode: Phaser.Scale.FIT,
           autoCenter: Phaser.Scale.CENTER_BOTH,
+          treadmill_speed: _TREADMILL_SPEED,
           width: _CONFIG_WIDTH,
-          height: _CONFIG_HEIGHT
+          height: _CONFIG_HEIGHT,
         }
     };
 

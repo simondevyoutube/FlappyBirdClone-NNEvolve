@@ -68,13 +68,6 @@ export const population = (function() {
           const p1 = top[i];
           const p2 = _RandomParent(parents, p1, totalFitness);
 
-          // const g = [];
-          // for (let r = 0; r < p1.genotype.length; r++ ) {
-          //   const roll = Math.random();
-          //   g.push(roll < 0.5 ? p1.genotype[r] : p2.genotype[r]);
-          // }
-          // newPopulation.push(_CopyGenotype({fitness: 1, genotype: g}));
-
           const index = Math.round(Math.random() * p1.genotype.length);
 
           const g = p1.genotype.slice(0, index).concat(
